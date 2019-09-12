@@ -2,10 +2,14 @@ use std::error;
 use std::fmt;
 use std::net::SocketAddr;
 
+use crate::auth::AuthMethod;
+
 /// Returned in case negotiating a proxy connection with a client fails for whatever reason.
 #[derive(Debug, Clone)]
 pub enum SOCKSError {
-    UnsupportedAuthMethodError(SocketAddr, Vec<u8>, Vec<u8>),
+    NoOverlappingAuthMethodsError(SocketAddr, Vec<AuthMethod>, Vec<AuthMethod>),
+    UnknownAuthMethodSubnegotiationVersionError(SocketAddr, u8, u8),
+    WrongCredentialsError(SocketAddr), // Don't store or log the credentials for security reasons
     ProtoolVersionError(SocketAddr, u8),
     UnknownRequestCommandError(SocketAddr, u8),
     UnknownAddressTypeError(SocketAddr, u8),
@@ -19,13 +23,17 @@ pub enum SOCKSError {
 impl fmt::Display for SOCKSError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            SOCKSError::UnsupportedAuthMethodError(client_addr, client_methods, server_methods) => {
+            SOCKSError::NoOverlappingAuthMethodsError(client_addr, client_methods, server_methods) => {
                 write!(f, "Could not negotiate authentication method with client '{}': client supports {:?}, we support {:?}", client_addr, client_methods, server_methods)
             },
 
             SOCKSError::ProtoolVersionError(client_addr, requested_version) => {
                 write!(f, "Client '{}' requested protocol version {}, but only 5 is supported", client_addr, requested_version)
             },
+
+            SOCKSError::UnknownAuthMethodSubnegotiationVersionError(client_addr, requested_version, supported_version) => {
+                write!(f, "Client '{}' requested auth subnegotiation version {}, but only {} is supported", client_addr, requested_version, supported_version)
+            }
 
             SOCKSError::UnknownAddressTypeError(client_addr, atyp) => {
                 write!(f, "Client '{}' requested unknown address type {}", client_addr, atyp)
@@ -46,9 +54,12 @@ impl fmt::Display for SOCKSError {
             },
             SOCKSError::TimeoutError(client_addr) => {
                 write!(f, "Client '{}' timed out", client_addr)
-            }
+            },
             SOCKSError::StreamIOError => {
                 write!(f, "Could not establish stream with unknown client")
+            },
+            SOCKSError::WrongCredentialsError(client_addr) => {
+                write!(f, "Client '{}' supplied invalid credentials", client_addr)
             }
         }
     }

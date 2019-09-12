@@ -1,12 +1,13 @@
 use crate::reply::SOCKSReply;
 use crate::request::SOCKSRequest;
 use crate::socks_error::SOCKSError;
+use crate::auth::AuthMethod;
+use crate::auth::user_pass_auth;
 
 use std::io::Read;
 use std::io::Write;
 use std::net;
 
-const NO_AUTH: u8 = 0x00;
 const NO_SUPPORTED_AUTH_METHODS: u8 = 0xFF;
 
 /*
@@ -20,22 +21,21 @@ If the connection
 
 pub struct SOCKSConnection {
     stream: net::TcpStream,
-    client_auth_methods: Vec<u8>,
     dst_addr: String,
     dst_port: u16,
 }
 
 impl SOCKSConnection {
     /// Negotiates a connection with the client and returns the TcpStream the client is connected to.
-    pub(crate) fn init(stream: net::TcpStream) -> Result<SOCKSConnection, SOCKSError> {
+    pub(crate) fn init(stream: net::TcpStream, supported_auth_methods: Vec<AuthMethod>, username: Option<String>, pass: Option<String>) -> Result<SOCKSConnection, SOCKSError> {
         let mut conn = SOCKSConnection {
             stream: stream,
-            client_auth_methods: Vec::new(),
             dst_addr: String::new(),
             dst_port: 0,
         };
 
         // FIXME: Handle r/w timeouts everywhere by returning appropriate SOCKSError
+
         // Ensure that the client speaks SOCKS5
         let mut version_buf: [u8; 1] = [0];
         conn.stream.read_exact(&mut version_buf).unwrap();
@@ -51,7 +51,8 @@ impl SOCKSConnection {
         // Read how many authentication methods the client supports
         let mut nmethods_buf: [u8; 1] = [0];
         conn.stream.read_exact(&mut nmethods_buf).unwrap();
-        if nmethods_buf[0] == 0 {
+        // Ensure client actually supplied > 0 auth methods
+        if nmethods_buf[0] < 1 {
             let mut reply = SOCKSReply::new(conn.stream.local_addr().unwrap());
             reply.report_general_server_error(&mut conn.stream);
             return Err(SOCKSError::NoAuthMethodsError(
@@ -63,26 +64,44 @@ impl SOCKSConnection {
         // Read the authentication methods supported by the client and check for overlap with ours
         let mut methods_buf = vec![0; nmethods_buf[0].into()];
         conn.stream.read_exact(&mut methods_buf).unwrap();
-        // TODO: Support username/pw and GSSAPI auth
-        if !methods_buf.contains(&NO_AUTH) {
-            // Tell the client there's no overlap in auth methods
-            let proto_ver: [u8; 1] = [5];
-            conn.stream.write(&proto_ver).unwrap();
-            let no_compat_methods: [u8; 1] = [NO_SUPPORTED_AUTH_METHODS];
-            conn.stream.write(&no_compat_methods).unwrap();
-            // Close the connection, as mandated by the spec
-            conn.stream.shutdown(net::Shutdown::Both).unwrap();
-            return Err(SOCKSError::UnsupportedAuthMethodError(
-                conn.stream.peer_addr().unwrap(),
-                conn.client_auth_methods.to_vec(),
-                vec![NO_AUTH],
-            ));
-        } else {
-            let proto_ver: [u8; 1] = [5];
-            conn.stream.write(&proto_ver).unwrap();
-            // Otherwise, tell the client to use no auth (0x00), because it's the only one we support right now
-            let no_auth: [u8; 1] = [NO_AUTH];
-            conn.stream.write(&no_auth).unwrap();
+        let mut client_methods: Vec<AuthMethod> = Vec::new();
+        for byte in methods_buf {
+            client_methods.push(AuthMethod::from_byte(byte));
+        }
+
+        let proto_ver_buf: [u8; 1] = [5];
+        conn.stream.write(&proto_ver_buf).unwrap();
+        match SOCKSConnection::get_auth_method_overlap(client_methods.clone(), supported_auth_methods.clone()) {
+            Some(overlap) => {
+                // If we support username/pass authentication, tell the client to use it
+                if overlap.contains(&AuthMethod::UsernamePassword) {
+                    let method_username_pw_buf: [u8; 1] = [AuthMethod::to_byte(&AuthMethod::UsernamePassword)];
+                    conn.stream.write(&method_username_pw_buf).unwrap();
+                    // User/Pass auth has a separate negotiation, perform that
+                    match user_pass_auth::negotiate_stream(username.unwrap(), pass.unwrap(), &mut conn.stream) {
+                        Some(err) => return Err(err),
+                        None => (),
+                    }
+                // Otherwise, fall back to no auth
+                } else if overlap.contains(&AuthMethod::NoAuth) {
+                    let method_no_auth_buf: [u8; 1] = [AuthMethod::to_byte(&AuthMethod::NoAuth)];
+                    conn.stream.write(&method_no_auth_buf).unwrap();
+                } else {
+                    panic!("Unimplemented auth method was registered as usable! This is a bug.");
+                }
+            },
+            None => {
+                // Tell the client there's no overlap in auth methods
+                let no_compat_methods_buf: [u8; 1] = [NO_SUPPORTED_AUTH_METHODS];
+                conn.stream.write(&no_compat_methods_buf).unwrap();
+                // Close the connection, as mandated by the spec
+                conn.stream.shutdown(net::Shutdown::Both).unwrap();
+                return Err(SOCKSError::NoOverlappingAuthMethodsError(
+                    conn.stream.peer_addr().unwrap(),
+                    supported_auth_methods,
+                    client_methods
+                ));
+            },
         }
 
         // Read the client's request, which contains information such as the destination server.
@@ -97,6 +116,22 @@ impl SOCKSConnection {
     pub fn get_stream(self) -> net::TcpStream {
         return self.stream;
     }
+
+
+    fn get_auth_method_overlap(one: Vec<AuthMethod>, two: Vec<AuthMethod>) -> Option<Vec<AuthMethod>> {
+        let mut intersection: Vec<AuthMethod> = Vec::new();
+        for method_1 in one {
+            if two.contains(&method_1) {
+                intersection.push(method_1);
+            }
+        }
+
+        if intersection.len() > 0 {
+            return Some(intersection);
+        } else {
+            return None;
+        }
+    }
 }
 
 /// Because a SOCKS client always expects one (and only one) SOCKS server response before data gets relayed,
@@ -110,8 +145,8 @@ pub struct UnrequitedSOCKSConnection {
 }
 
 impl UnrequitedSOCKSConnection {
-    pub(crate) fn init(stream: net::TcpStream) -> Result<UnrequitedSOCKSConnection, SOCKSError> {
-        let socks_conn = SOCKSConnection::init(stream)?;
+    pub(crate) fn init(stream: net::TcpStream, auth_methods: Vec<AuthMethod>, username: Option<String>, pass: Option<String>) -> Result<UnrequitedSOCKSConnection, SOCKSError> {
+        let socks_conn = SOCKSConnection::init(stream, auth_methods, username, pass)?;
         return Ok(UnrequitedSOCKSConnection {
             underlying_connection: socks_conn,
         });
