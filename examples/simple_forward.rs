@@ -4,6 +4,8 @@ use std::net;
 use std::thread;
 use std::time;
 
+use ignore_result::Ignore;
+
 fn main() {
     // Start a new server bound to localhost
     let server = socks5_frontend::Server::init(
@@ -34,16 +36,12 @@ fn main() {
                 // call conn.report_connection_not_allowed() to tell the client about a violation.
 
                 // Try to dial the requested host
+
+                let remote_addr = conn.get_destination_address_string();
                 println!(
-                    "Connecting to {}:{} on behalf of proxy client {}",
-                    conn.get_destination_address().0,
-                    conn.get_destination_address().1,
+                    "Connecting to {} on behalf of proxy client {}",
+                    remote_addr,
                     conn.get_client_address()
-                );
-                let remote_addr: String = format!(
-                    "{}:{}",
-                    conn.get_destination_address().0,
-                    conn.get_destination_address().1
                 );
 
                 match net::TcpStream::connect(remote_addr) {
@@ -63,7 +61,7 @@ fn main() {
                         // Spawn 2 threads to continuously copy on both directions
                         // This is not very efficient, but good enough for a demo.
                         // We need to clone the stream here because both the reading and writing threads need a mutable handle
-                        let mut client_stream_1 = ready_conn.get_stream();
+                        let mut client_stream_1 = ready_conn.unwrap().get_stream();
                         let mut client_stream_2 = client_stream_1.try_clone().unwrap();
                         let mut server_stream_1 = remote_stream;
                         let mut server_stream_2 = server_stream_1.try_clone().unwrap();
@@ -82,10 +80,10 @@ fn main() {
                     Err(err) => {
                         println!("Failed to reach destination: {}", err);
                         match err.kind() {
-                            io::ErrorKind::ConnectionRefused => conn.report_connection_refused(),
-                            io::ErrorKind::NotFound => conn.report_destination_unreachable(),
-                            io::ErrorKind::UnexpectedEof => conn.report_destination_unreachable(),
-                            _ => conn.report_destination_unreachable(),
+                            io::ErrorKind::ConnectionRefused => conn.report_connection_refused().ignore(),
+                            io::ErrorKind::NotFound => conn.report_destination_unreachable().ignore(),
+                            io::ErrorKind::UnexpectedEof => conn.report_destination_unreachable().ignore(),
+                            _ => conn.report_destination_unreachable().ignore(),
                         }
                     }
                 };

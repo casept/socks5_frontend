@@ -1,4 +1,5 @@
 use byteorder::{NetworkEndian, WriteBytesExt};
+use std::io;
 use std::io::Write;
 use std::net;
 
@@ -54,83 +55,91 @@ impl SOCKSReply {
         };
     }
 
-    fn send(&mut self, s: &mut net::TcpStream) {
-        // TODO: Error handling!
+    fn send(&mut self, s: &mut net::TcpStream) -> Result<(), io::Error> {
         let ver_buf: [u8; 1] = [5];
-        s.write(&ver_buf).unwrap();
+        s.write(&ver_buf)?;
         let rep_buf: [u8; 1] = [self.rep.as_ref().unwrap().to_byte()];
-        s.write(&rep_buf).unwrap();
+        s.write(&rep_buf)?;
         let rsv_buf: [u8; 1] = [0];
-        s.write(&rsv_buf).unwrap();
+        s.write(&rsv_buf)?;
         let atyp_buf: [u8; 1] = [self.atyp];
-        s.write(&atyp_buf).unwrap();
+        s.write(&atyp_buf)?;
         let bnd_addr_buf = match self.bnd_addr {
             net::IpAddr::V4(ip) => ip.octets().to_vec(),
             net::IpAddr::V6(ip) => ip.octets().to_vec(),
         };
-        s.write(&bnd_addr_buf).unwrap();
+        s.write(&bnd_addr_buf)?;
         // Make sure the port has correct endianess
         let mut bnd_port_buf: Vec<u8> = Vec::new();
-        bnd_port_buf
-            .write_u16::<NetworkEndian>(self.bnd_port)
-            .unwrap();
-        s.write(&bnd_port_buf).unwrap();
+        bnd_port_buf.write_u16::<NetworkEndian>(self.bnd_port)?;
+        s.write(&bnd_port_buf)?;
+
+        return Ok(());
     }
 
-    pub(crate) fn report_success(&mut self, s: &mut net::TcpStream) {
+    pub(crate) fn report_success(&mut self, s: &mut net::TcpStream) -> Result<(), io::Error> {
         self.rep = Some(ReplyType::Succeeded);
-        self.send(s);
+        self.send(s)?;
+        return Ok(());
     }
 
-    pub(crate) fn report_connection_not_allowed(&mut self, s: &mut net::TcpStream) {
+    pub(crate) fn report_connection_not_allowed(&mut self, s: &mut net::TcpStream) -> Result<(), io::Error> {
         self.rep = Some(ReplyType::ConnectionNotAllowed);
-        self.send(s);
+        self.send(s)?;
         // The spec expects us to close the connection after a failure
-        s.shutdown(net::Shutdown::Both).unwrap(); // TODO: Does this actually flush the error response to the client first?
+        s.shutdown(net::Shutdown::Both)?; // TODO: Does this actually flush the error response to the client first?
+        return Ok(());
     }
-    pub(crate) fn report_network_unreachable(&mut self, s: &mut net::TcpStream) {
+    pub(crate) fn report_network_unreachable(&mut self, s: &mut net::TcpStream)  -> Result<(), io::Error> {
         self.rep = Some(ReplyType::NetworkUnreachable);
-        self.send(s);
+        self.send(s)?;
         // The spec expects us to close the connection after a failure
-        s.shutdown(net::Shutdown::Both).unwrap();
+        s.shutdown(net::Shutdown::Both)?;
+        return Ok(());
     }
-    pub(crate) fn report_destination_unreachable(&mut self, s: &mut net::TcpStream) {
+    pub(crate) fn report_destination_unreachable(&mut self, s: &mut net::TcpStream)  -> Result<(), io::Error> {
         self.rep = Some(ReplyType::DestinationUnreachable);
-        self.send(s);
+        self.send(s)?;
         // The spec expects us to close the connection after a failure
-        s.shutdown(net::Shutdown::Both).unwrap();
+        s.shutdown(net::Shutdown::Both)?;
+        return Ok(());
     }
-    pub(crate) fn report_general_server_error(&mut self, s: &mut net::TcpStream) {
+    pub(crate) fn report_general_server_error(&mut self, s: &mut net::TcpStream)  -> Result<(), io::Error>{
         self.rep = Some(ReplyType::GeneralSocksServerFailure);
-        self.send(s);
+        self.send(s)?;
         // The spec expects us to close the connection after a failure
-        s.shutdown(net::Shutdown::Both).unwrap();
+        s.shutdown(net::Shutdown::Both)?;
+        return Ok(());
     }
 
-    pub(crate) fn report_command_not_supported(&mut self, s: &mut net::TcpStream) {
+    pub(crate) fn report_command_not_supported(&mut self, s: &mut net::TcpStream)  -> Result<(), io::Error>{
         self.rep = Some(ReplyType::CommandNotSupported);
-        self.send(s);
+        self.send(s)?;
         // The spec expects us to close the connection after a failure
-        s.shutdown(net::Shutdown::Both).unwrap();
+        s.shutdown(net::Shutdown::Both)?;
+        return Ok(());
     }
 
-    pub(crate) fn report_address_type_not_supported(&mut self, s: &mut net::TcpStream) {
+    pub(crate) fn report_address_type_not_supported(&mut self, s: &mut net::TcpStream)  -> Result<(), io::Error>{
         self.rep = Some(ReplyType::AddressTypeNotSupported);
-        self.send(s);
+        self.send(s)?;
         // The spec expects us to close the connection after a failure
-        s.shutdown(net::Shutdown::Both).unwrap();
+        s.shutdown(net::Shutdown::Both)?;
+        return Ok(());
     }
 
-    pub(crate) fn report_connection_refused(&mut self, s: &mut net::TcpStream) {
+    pub(crate) fn report_connection_refused(&mut self, s: &mut net::TcpStream)  -> Result<(), io::Error>{
         self.rep = Some(ReplyType::ConnectionRefused);
-        self.send(s);
+        self.send(s)?;
         // The spec expects us to close the connection after a failure
-        s.shutdown(net::Shutdown::Both).unwrap();
+        s.shutdown(net::Shutdown::Both)?;
+        return Ok(());
     }
-    pub(crate) fn report_ttl_expired(&mut self, s: &mut net::TcpStream) {
+    pub(crate) fn report_ttl_expired(&mut self, s: &mut net::TcpStream)  -> Result<(), io::Error> {
         self.rep = Some(ReplyType::TTLExpired);
-        self.send(s);
+        self.send(s)?;
         // The spec expects us to close the connection after a failure
-        s.shutdown(net::Shutdown::Both).unwrap();
+        s.shutdown(net::Shutdown::Both)?;
+        return Ok(());
     }
 }

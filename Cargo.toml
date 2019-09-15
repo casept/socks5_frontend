@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 byteorder = "~1"
+ignore-result = "~0"
 
 [dev-dependencies]
 simple-server = "~0"

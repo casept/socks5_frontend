@@ -1,11 +1,13 @@
 use std::error;
 use std::fmt;
 use std::net::SocketAddr;
+use std::io;
+use std::convert::From;
 
 use crate::auth::AuthMethod;
 
 /// Returned in case negotiating a proxy connection with a client fails for whatever reason.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum SOCKSError {
     NoOverlappingAuthMethodsError(SocketAddr, Vec<AuthMethod>, Vec<AuthMethod>),
     UnknownAuthMethodSubnegotiationVersionError(SocketAddr, u8, u8),
@@ -17,7 +19,7 @@ pub enum SOCKSError {
     UnknownProtocolViolationError(SocketAddr, String),
     NoAuthMethodsError(SocketAddr),
     TimeoutError(SocketAddr),
-    StreamIOError,
+    StreamIOError(io::Error),
 }
 
 impl fmt::Display for SOCKSError {
@@ -55,8 +57,8 @@ impl fmt::Display for SOCKSError {
             SOCKSError::TimeoutError(client_addr) => {
                 write!(f, "Client '{}' timed out", client_addr)
             },
-            SOCKSError::StreamIOError => {
-                write!(f, "Could not establish stream with unknown client")
+            SOCKSError::StreamIOError(e) => {
+                write!(f, "Failed to send data due to an IO error: {}", e)
             },
             SOCKSError::WrongCredentialsError(client_addr) => {
                 write!(f, "Client '{}' supplied invalid credentials", client_addr)
@@ -71,5 +73,11 @@ impl error::Error for SOCKSError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         // Generic error, underlying cause isn't tracked.
         None
+    }
+}
+
+impl From<io::Error> for SOCKSError {
+    fn from(item: io::Error) -> Self {
+        return SOCKSError::StreamIOError(item);
     }
 }

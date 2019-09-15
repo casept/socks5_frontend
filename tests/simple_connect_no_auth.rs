@@ -55,7 +55,7 @@ fn start_proxy_server() -> net::SocketAddr {
                     let ready_conn = conn.report_success();
 
                     // Start relaying data between the two streams
-                    let mut client_stream_1 = ready_conn.get_stream();
+                    let mut client_stream_1 = ready_conn.unwrap().get_stream();
                     let mut client_stream_2 = client_stream_1.try_clone().unwrap();
                     let mut server_stream_1 = remote_stream;
                     let mut server_stream_2 = server_stream_1.try_clone().unwrap();
@@ -66,10 +66,10 @@ fn start_proxy_server() -> net::SocketAddr {
                 }
                 Err(err) => {
                     match err.kind() {
-                        io::ErrorKind::ConnectionRefused => conn.report_connection_refused(),
-                        io::ErrorKind::NotFound => conn.report_destination_unreachable(),
-                        io::ErrorKind::UnexpectedEof => conn.report_destination_unreachable(),
-                        _ => conn.report_destination_unreachable(),
+                        io::ErrorKind::ConnectionRefused => conn.report_connection_refused().unwrap(),
+                        io::ErrorKind::NotFound => conn.report_destination_unreachable().unwrap(),
+                        io::ErrorKind::UnexpectedEof => conn.report_destination_unreachable().unwrap(),
+                        _ => conn.report_destination_unreachable().unwrap(),
                     }
                     panic!("Failed to connect to remote {}: {}", remote_addr, err);
                 }

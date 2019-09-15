@@ -2,9 +2,9 @@ use std::io;
 use std::net;
 use std::time;
 
+use crate::auth::AuthMethod;
 use crate::connection::UnrequitedSOCKSConnection;
 use crate::socks_error::SOCKSError;
-use crate::auth::AuthMethod;
 
 /// A SOCKSServer's function is to accept and negotiate connections from clients.
 /// However, actually forwarding/modifying client data is out of scope for this library,
@@ -38,7 +38,7 @@ impl SOCKSServer {
         timeout: Option<time::Duration>,
         auth_methods: Vec<AuthMethod>,
         username: Option<String>,
-        password: Option<String>
+        password: Option<String>,
     ) -> Result<SOCKSServer, io::Error> {
         let listener = net::TcpListener::bind(&bind_addr)?;
         let server = SOCKSServer {
@@ -62,9 +62,14 @@ impl Iterator for SOCKSServer {
                 stream.set_read_timeout(self.timeout).unwrap();
                 stream.set_write_timeout(self.timeout).unwrap();
             }
-            Err(_) => return Some(Err(SOCKSError::StreamIOError)),
+            Err(e) => return Some(Err(SOCKSError::StreamIOError(e))),
         }
-        match UnrequitedSOCKSConnection::init(stream, self.auth_methods.clone(), self.username.clone(), self.password.clone()) {
+        match UnrequitedSOCKSConnection::init(
+            stream,
+            self.auth_methods.clone(),
+            self.username.clone(),
+            self.password.clone(),
+        ) {
             Ok(val) => return Some(Ok(val)),
             Err(err) => return Some(Err(err)),
         }

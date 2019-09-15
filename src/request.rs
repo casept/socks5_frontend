@@ -8,7 +8,7 @@ use std::io::Read;
 use std::net;
 
 use byteorder::{NetworkEndian, ReadBytesExt};
-
+use ignore_result::Ignore;
 
 const ATYP_V4: u8 = 0x01;
 const ATYP_DOMAIN: u8 = 0x03;
@@ -36,17 +36,17 @@ impl SOCKSRequest {
     // Keep transitioning between states until the protocol has been negotiated and return the TcpStream,
     // or error if negotiating with the client fails.
     pub(crate) fn from_stream(stream: &mut net::TcpStream) -> Result<SOCKSRequest, SOCKSError> {
-        let cloned_stream = stream.try_clone().unwrap(); // Work around ownership issues
+        let cloned_stream = stream.try_clone()?; // Work around ownership issues
 
         let mut req = SOCKSRequest::new(cloned_stream);
 
         // Read the protocol version
         let mut ver_buf: [u8; 1] = [0x00];
-        stream.read_exact(&mut ver_buf).unwrap();
+        stream.read_exact(&mut ver_buf)?;
         if ver_buf[0] != 5 {
             // Return an error to the client
             let mut reply = SOCKSReply::new(stream.local_addr().unwrap());
-            reply.report_general_server_error(&mut req.stream);
+            reply.report_general_server_error(&mut req.stream).ignore();
             return Err(SOCKSError::ProtoolVersionError(
                 req.stream.peer_addr().unwrap(),
                 ver_buf[0],
@@ -59,7 +59,7 @@ impl SOCKSRequest {
         req.cmd = Command::from_byte(cmd_buf[0]);
         if req.cmd == Command::Unknown {
             let mut reply = SOCKSReply::new(stream.local_addr().unwrap());
-            reply.report_command_not_supported(stream);
+            reply.report_command_not_supported(stream).ignore();
             return Err(SOCKSError::UnknownRequestCommandError(
                 stream.peer_addr().unwrap(),
                 cmd_buf[0],
@@ -71,7 +71,7 @@ impl SOCKSRequest {
         stream.read_exact(&mut rsv_buf).unwrap();
         if rsv_buf[0] != 0 {
             let mut reply = SOCKSReply::new(stream.local_addr().unwrap());
-            reply.report_general_server_error(stream);
+            reply.report_general_server_error(stream).ignore();
             return Err(SOCKSError::UnknownReservedByteError(
                 stream.peer_addr().unwrap(),
                 rsv_buf[0],
@@ -79,48 +79,47 @@ impl SOCKSRequest {
         }
         // Read the type of address to connect to
         let mut atyp_buf: [u8; 1] = [0x00];
-        stream.read_exact(&mut atyp_buf).unwrap();
+        stream.read_exact(&mut atyp_buf)?;
         req.atyp = atyp_buf[0];
 
-        // TODO: Error handling
         // Different types of address require specific handling
         match req.atyp {
             ATYP_V4 => {
                 // Read the address that we'll proxy data to
                 let mut buf: [u8; 4] = [0x00; 4];
-                stream.read_exact(&mut buf).unwrap();
+                stream.read_exact(&mut buf)?;
                 // Convert these octets to IPAddr
                 req.dst_addr = Address::V4(net::Ipv4Addr::from(buf));
-            },
+            }
             ATYP_V6 => {
                 // Read the address that we'll proxy data to
                 let mut buf: [u8; 16] = [0x00; 16];
-                stream.read_exact(&mut buf).unwrap();
+                stream.read_exact(&mut buf)?;
                 // Convert these octets to IPAddr
                 req.dst_addr = Address::V6(net::Ipv6Addr::from(buf));
-            },
+            }
             ATYP_DOMAIN => {
                 // The first byte contains the length of the domain name
                 let mut name_len_buf: [u8; 1] = [0x00];
-                stream.read_exact(&mut name_len_buf).unwrap();
+                stream.read_exact(&mut name_len_buf)?;
                 let addr_buf_len = name_len_buf[0];
                 let mut buf: Vec<u8> = vec![0; addr_buf_len.try_into().unwrap()];
-                stream.read_exact(&mut buf).unwrap();
+                stream.read_exact(&mut buf)?;
                 req.dst_addr = Address::DomainName(String::from_utf8(buf).unwrap())
-            },
+            }
             _ => {
                 // Unknown address type
                 let mut reply = SOCKSReply::new(stream.local_addr().unwrap());
-                reply.report_address_type_not_supported(stream);
+                reply.report_address_type_not_supported(stream).ignore();
                 return Err(SOCKSError::UnknownAddressTypeError(
                     stream.peer_addr().unwrap(),
                     req.atyp,
                 ));
-            },
+            }
         }
 
         // Read the port that we'll proxy data to (in host byte order)
-        req.dst_port = stream.read_u16::<NetworkEndian>().unwrap();
+        req.dst_port = stream.read_u16::<NetworkEndian>()?;
         return Ok(req);
     }
 

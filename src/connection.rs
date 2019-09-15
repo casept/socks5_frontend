@@ -7,7 +7,10 @@ use crate::address::Address;
 
 use std::io::Read;
 use std::io::Write;
+use std::io;
 use std::net;
+
+use ignore_result::Ignore;
 
 const NO_SUPPORTED_AUTH_METHODS: u8 = 0xFF;
 
@@ -39,10 +42,10 @@ impl SOCKSConnection {
 
         // Ensure that the client speaks SOCKS5
         let mut version_buf: [u8; 1] = [0];
-        conn.stream.read_exact(&mut version_buf).unwrap();
+        conn.stream.read_exact(&mut version_buf)?;
         if version_buf[0] != 5 {
             let mut reply = SOCKSReply::new(conn.stream.local_addr().unwrap());
-            reply.report_general_server_error(&mut conn.stream);
+            reply.report_general_server_error(&mut conn.stream).ignore();
             return Err(SOCKSError::ProtoolVersionError(
                 conn.stream.peer_addr().unwrap(),
                 version_buf[0],
@@ -51,11 +54,11 @@ impl SOCKSConnection {
 
         // Read how many authentication methods the client supports
         let mut nmethods_buf: [u8; 1] = [0];
-        conn.stream.read_exact(&mut nmethods_buf).unwrap();
+        conn.stream.read_exact(&mut nmethods_buf)?;
         // Ensure client actually supplied > 0 auth methods
         if nmethods_buf[0] < 1 {
             let mut reply = SOCKSReply::new(conn.stream.local_addr().unwrap());
-            reply.report_general_server_error(&mut conn.stream);
+            reply.report_general_server_error(&mut conn.stream).ignore();
             return Err(SOCKSError::NoAuthMethodsError(
                 conn.stream.peer_addr().unwrap(),
             ));
@@ -64,20 +67,20 @@ impl SOCKSConnection {
 
         // Read the authentication methods supported by the client and check for overlap with ours
         let mut methods_buf = vec![0; nmethods_buf[0].into()];
-        conn.stream.read_exact(&mut methods_buf).unwrap();
+        conn.stream.read_exact(&mut methods_buf)?;
         let mut client_methods: Vec<AuthMethod> = Vec::new();
         for byte in methods_buf {
             client_methods.push(AuthMethod::from_byte(byte));
         }
 
         let proto_ver_buf: [u8; 1] = [5];
-        conn.stream.write(&proto_ver_buf).unwrap();
+        conn.stream.write(&proto_ver_buf)?;
         match SOCKSConnection::get_auth_method_overlap(client_methods.clone(), supported_auth_methods.clone()) {
             Some(overlap) => {
                 // If we support username/pass authentication, tell the client to use it
                 if overlap.contains(&AuthMethod::UsernamePassword) {
                     let method_username_pw_buf: [u8; 1] = [AuthMethod::to_byte(&AuthMethod::UsernamePassword)];
-                    conn.stream.write(&method_username_pw_buf).unwrap();
+                    conn.stream.write(&method_username_pw_buf)?;
                     // User/Pass auth has a separate negotiation, perform that
                     match user_pass_auth::negotiate_stream(username.unwrap(), pass.unwrap(), &mut conn.stream) {
                         Some(err) => return Err(err),
@@ -86,7 +89,7 @@ impl SOCKSConnection {
                 // Otherwise, fall back to no auth
                 } else if overlap.contains(&AuthMethod::NoAuth) {
                     let method_no_auth_buf: [u8; 1] = [AuthMethod::to_byte(&AuthMethod::NoAuth)];
-                    conn.stream.write(&method_no_auth_buf).unwrap();
+                    conn.stream.write(&method_no_auth_buf)?;
                 } else {
                     panic!("Unimplemented auth method was registered as usable! This is a bug.");
                 }
@@ -94,9 +97,9 @@ impl SOCKSConnection {
             None => {
                 // Tell the client there's no overlap in auth methods
                 let no_compat_methods_buf: [u8; 1] = [NO_SUPPORTED_AUTH_METHODS];
-                conn.stream.write(&no_compat_methods_buf).unwrap();
+                conn.stream.write(&no_compat_methods_buf)?;
                 // Close the connection, as mandated by the spec
-                conn.stream.shutdown(net::Shutdown::Both).unwrap();
+                conn.stream.shutdown(net::Shutdown::Both)?;
                 return Err(SOCKSError::NoOverlappingAuthMethodsError(
                     conn.stream.peer_addr().unwrap(),
                     supported_auth_methods,
@@ -106,7 +109,7 @@ impl SOCKSConnection {
         }
 
         // Read the client's request, which contains information such as the destination server.
-        let mut cloned_stream = conn.stream.try_clone().unwrap();
+        let mut cloned_stream = conn.stream.try_clone()?;
         let req = SOCKSRequest::from_stream(&mut cloned_stream)?;
         conn.dst_addr = req.get_dst_addr();
         conn.dst_port = req.get_dst_port();
@@ -153,32 +156,37 @@ impl UnrequitedSOCKSConnection {
         });
     }
 
-    pub fn report_success(mut self) -> SOCKSConnection {
+    pub fn report_success(mut self) -> Result<SOCKSConnection, io::Error> {
         let mut reply = SOCKSReply::new(self.underlying_connection.stream.local_addr().unwrap());
-        reply.report_success(&mut self.underlying_connection.stream);
-        return self.underlying_connection;
+        reply.report_success(&mut self.underlying_connection.stream)?;
+        return Ok(self.underlying_connection);
     }
-    pub fn report_connection_not_allowed(mut self) {
+    pub fn report_connection_not_allowed(mut self) -> Result<(), io::Error> {
         let mut reply = SOCKSReply::new(self.underlying_connection.stream.local_addr().unwrap());
-        reply.report_connection_not_allowed(&mut self.underlying_connection.stream);
-    }
-
-    pub fn report_destination_unreachable(mut self) {
-        let mut reply = SOCKSReply::new(self.underlying_connection.stream.local_addr().unwrap());
-        reply.report_destination_unreachable(&mut self.underlying_connection.stream);
-    }
-    pub fn report_network_unreachable(mut self) {
-        let mut reply = SOCKSReply::new(self.underlying_connection.stream.local_addr().unwrap());
-        reply.report_network_unreachable(&mut self.underlying_connection.stream);
+        reply.report_connection_not_allowed(&mut self.underlying_connection.stream)?;
+        return Ok(());
     }
 
-    pub fn report_connection_refused(mut self) {
+    pub fn report_destination_unreachable(mut self) ->  Result<(), io::Error> {
         let mut reply = SOCKSReply::new(self.underlying_connection.stream.local_addr().unwrap());
-        reply.report_connection_refused(&mut self.underlying_connection.stream);
+        reply.report_destination_unreachable(&mut self.underlying_connection.stream)?;
+        return Ok(());
     }
-    pub fn report_ttl_expired(mut self) {
+    pub fn report_network_unreachable(mut self) ->  Result<(), io::Error> {
         let mut reply = SOCKSReply::new(self.underlying_connection.stream.local_addr().unwrap());
-        reply.report_ttl_expired(&mut self.underlying_connection.stream);
+        reply.report_network_unreachable(&mut self.underlying_connection.stream)?;
+        return Ok(());
+    }
+
+    pub fn report_connection_refused(mut self) ->  Result<(), io::Error> {
+        let mut reply = SOCKSReply::new(self.underlying_connection.stream.local_addr().unwrap());
+        reply.report_connection_refused(&mut self.underlying_connection.stream)?;
+        return Ok(());
+    }
+    pub fn report_ttl_expired(mut self) ->  Result<(), io::Error> {
+        let mut reply = SOCKSReply::new(self.underlying_connection.stream.local_addr().unwrap());
+        reply.report_ttl_expired(&mut self.underlying_connection.stream)?;
+        return Ok(());
     }
 
     pub fn get_client_address(&self) -> net::SocketAddr {
