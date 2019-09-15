@@ -1,4 +1,4 @@
-use crate::address::AddressType;
+use crate::address::Address;
 use crate::command::Command;
 use crate::reply::SOCKSReply;
 use crate::socks_error::SOCKSError;
@@ -9,11 +9,16 @@ use std::net;
 
 use byteorder::{NetworkEndian, ReadBytesExt};
 
+
+const ATYP_V4: u8 = 0x01;
+const ATYP_DOMAIN: u8 = 0x03;
+const ATYP_V6: u8 = 0x04;
+
 pub(crate) struct SOCKSRequest {
     stream: net::TcpStream,
     cmd: Command,
-    atyp: AddressType,
-    dst_addr: String,
+    atyp: u8,
+    dst_addr: Address,
     dst_port: u16, // Remember to convert from BE!
 }
 
@@ -22,8 +27,8 @@ impl SOCKSRequest {
         return SOCKSRequest {
             stream: stream,
             cmd: Command::Unknown,
-            atyp: AddressType::Unknown,
-            dst_addr: String::new(),
+            atyp: 0x00,
+            dst_addr: Address::DomainName("".to_string()),
             dst_port: 0x00,
         };
     }
@@ -75,45 +80,51 @@ impl SOCKSRequest {
         // Read the type of address to connect to
         let mut atyp_buf: [u8; 1] = [0x00];
         stream.read_exact(&mut atyp_buf).unwrap();
-        req.atyp = AddressType::from_byte(atyp_buf[0]);
+        req.atyp = atyp_buf[0];
 
         // TODO: Error handling
-        // Determine how many bytes of address will follow
-        let addr_buf_len;
+        // Different types of address require specific handling
         match req.atyp {
-            AddressType::V4 => {
-                addr_buf_len = 4;
-            }
-            AddressType::V6 => {
-                addr_buf_len = 16;
-            }
-            AddressType::DomainName => {
+            ATYP_V4 => {
+                // Read the address that we'll proxy data to
+                let mut buf: [u8; 4] = [0x00; 4];
+                stream.read_exact(&mut buf).unwrap();
+                // Convert these octets to IPAddr
+                req.dst_addr = Address::V4(net::Ipv4Addr::from(buf));
+            },
+            ATYP_V6 => {
+                // Read the address that we'll proxy data to
+                let mut buf: [u8; 16] = [0x00; 16];
+                stream.read_exact(&mut buf).unwrap();
+                // Convert these octets to IPAddr
+                req.dst_addr = Address::V6(net::Ipv6Addr::from(buf));
+            },
+            ATYP_DOMAIN => {
                 // The first byte contains the length of the domain name
                 let mut name_len_buf: [u8; 1] = [0x00];
                 stream.read_exact(&mut name_len_buf).unwrap();
-                addr_buf_len = name_len_buf[0];
-            }
-            AddressType::Unknown => {
+                let addr_buf_len = name_len_buf[0];
+                let mut buf: Vec<u8> = vec![0; addr_buf_len.try_into().unwrap()];
+                stream.read_exact(&mut buf).unwrap();
+                req.dst_addr = Address::DomainName(String::from_utf8(buf).unwrap())
+            },
+            _ => {
+                // Unknown address type
                 let mut reply = SOCKSReply::new(stream.local_addr().unwrap());
                 reply.report_address_type_not_supported(stream);
                 return Err(SOCKSError::UnknownAddressTypeError(
                     stream.peer_addr().unwrap(),
-                    atyp_buf[0],
+                    req.atyp,
                 ));
-            }
+            },
         }
-
-        // Read the address that we'll proxy data to
-        let mut dst_addr_buf: Vec<u8> = vec![0; addr_buf_len.try_into().unwrap()];
-        stream.read_exact(&mut dst_addr_buf).unwrap();
-        req.dst_addr = String::from_utf8(dst_addr_buf).unwrap();
 
         // Read the port that we'll proxy data to (in host byte order)
         req.dst_port = stream.read_u16::<NetworkEndian>().unwrap();
         return Ok(req);
     }
 
-    pub(crate) fn get_dst_addr(&self) -> String {
+    pub(crate) fn get_dst_addr(&self) -> Address {
         return self.dst_addr.clone();
     }
     pub(crate) fn get_dst_port(&self) -> u16 {

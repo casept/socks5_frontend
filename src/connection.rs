@@ -3,6 +3,7 @@ use crate::request::SOCKSRequest;
 use crate::socks_error::SOCKSError;
 use crate::auth::AuthMethod;
 use crate::auth::user_pass_auth;
+use crate::address::Address;
 
 use std::io::Read;
 use std::io::Write;
@@ -21,7 +22,7 @@ If the connection
 
 pub struct SOCKSConnection {
     stream: net::TcpStream,
-    dst_addr: String,
+    dst_addr: Address,
     dst_port: u16,
 }
 
@@ -30,7 +31,7 @@ impl SOCKSConnection {
     pub(crate) fn init(stream: net::TcpStream, supported_auth_methods: Vec<AuthMethod>, username: Option<String>, pass: Option<String>) -> Result<SOCKSConnection, SOCKSError> {
         let mut conn = SOCKSConnection {
             stream: stream,
-            dst_addr: String::new(),
+            dst_addr: Address::DomainName("".to_string()),
             dst_port: 0,
         };
 
@@ -184,10 +185,24 @@ impl UnrequitedSOCKSConnection {
         return self.underlying_connection.stream.peer_addr().unwrap();
     }
 
-    pub fn get_destination_address(&self) -> (String, u16) {
+    pub fn get_destination_address(&self) -> (Address, u16) {
         return (
             self.underlying_connection.dst_addr.clone(),
             self.underlying_connection.dst_port,
         );
+    }
+
+    pub fn get_destination_address_string(&self) -> String {
+        match self.underlying_connection.dst_addr.clone() {
+            Address::V6(addr) => {
+                return format!("[{}]:{}", addr, self.underlying_connection.dst_port);
+            },
+            Address::V4(addr) => {
+                return format!("{}:{}", addr, self.underlying_connection.dst_port);
+            }
+            Address::DomainName(addr) => {
+                return format!("{}:{}", addr, self.underlying_connection.dst_port);
+            }
+        }
     }
 }

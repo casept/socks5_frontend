@@ -1,8 +1,9 @@
-use crate::address::AddressType;
-
 use byteorder::{NetworkEndian, WriteBytesExt};
 use std::io::Write;
 use std::net;
+
+const ATYP_V4: u8 = 0x01;
+const ATYP_V6: u8 = 0x04;
 
 enum ReplyType {
     Succeeded,
@@ -33,16 +34,21 @@ impl ReplyType {
 }
 pub(crate) struct SOCKSReply {
     rep: Option<ReplyType>,
-    atyp: AddressType,
+    atyp: u8,
     bnd_addr: net::IpAddr,
     bnd_port: u16, // Remember to convert to BE before sending!
 }
 
 impl SOCKSReply {
     pub(crate) fn new(dest_conn_source_addr: net::SocketAddr) -> SOCKSReply {
+        let atyp: u8;
+        match dest_conn_source_addr.ip() {
+            net::IpAddr::V4(_) => atyp = ATYP_V4,
+            net::IpAddr::V6(_) => atyp = ATYP_V6,
+        }
         return SOCKSReply {
             rep: None,
-            atyp: AddressType::from_socket_addr(dest_conn_source_addr),
+            atyp: atyp,
             bnd_addr: dest_conn_source_addr.ip(),
             bnd_port: dest_conn_source_addr.port(),
         };
@@ -56,7 +62,7 @@ impl SOCKSReply {
         s.write(&rep_buf).unwrap();
         let rsv_buf: [u8; 1] = [0];
         s.write(&rsv_buf).unwrap();
-        let atyp_buf: [u8; 1] = [self.atyp.to_byte()];
+        let atyp_buf: [u8; 1] = [self.atyp];
         s.write(&atyp_buf).unwrap();
         let bnd_addr_buf = match self.bnd_addr {
             net::IpAddr::V4(ip) => ip.octets().to_vec(),

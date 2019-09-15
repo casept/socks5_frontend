@@ -9,6 +9,9 @@ fn main() {
     let server = socks5_frontend::Server::init(
         "127.0.0.1:1080".parse().unwrap(),
         Some(time::Duration::from_secs(1)),
+        vec![socks5_frontend::AuthMethod::NoAuth],
+        None,
+        None
     )
     .unwrap();
     // The library handles accepting new clients and authenticating them for you.

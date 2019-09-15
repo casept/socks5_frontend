@@ -1,39 +1,19 @@
 use std::net;
+use std::fmt;
 
-#[derive(PartialEq)]
-pub(crate) enum AddressType {
-    Unknown,
-    V4,
-    DomainName,
-    V6,
+#[derive(PartialEq, Clone)]
+pub enum Address {
+    V4(net::Ipv4Addr),
+    DomainName(String),
+    V6(net::Ipv6Addr),
 }
 
-impl AddressType {
-    pub(crate) fn from_byte(b: u8) -> AddressType {
-        match b {
-            0x01 => return AddressType::V4,
-            0x03 => return AddressType::DomainName,
-            0x04 => return AddressType::V6,
-            _ => return AddressType::Unknown,
-        }
-    }
-
-    pub(crate) fn to_byte(&self) -> u8 {
+impl fmt::Display for Address {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AddressType::V4 => return 0x01,
-            AddressType::DomainName => return 0x03,
-            AddressType::V6 => return 0x04,
-            AddressType::Unknown => panic!("Attempt to serialize unknown AddressType. This is a bug!"),
-        }
-    }
-
-    pub(crate) fn from_socket_addr(s: net::SocketAddr) -> AddressType {
-        if s.is_ipv4() {
-            return AddressType::V4;
-        } else if s.is_ipv6() {
-            return AddressType::V6;
-        } else {
-            panic!("Unknown SocketAddr address type!");
+            Address::V4(addr) => write!(f, "{}", addr),
+            Address::V6(addr) => write!(f, "{}", addr),
+            Address::DomainName(addr) => write!(f, "{}", addr),
         }
     }
 }
