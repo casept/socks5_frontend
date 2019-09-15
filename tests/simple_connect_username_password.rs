@@ -60,13 +60,9 @@ fn start_proxy_server() -> net::SocketAddr {
                     let mut server_stream_1 = remote_stream;
                     let mut server_stream_2 = server_stream_1.try_clone().unwrap();
                     // Client => Server
-                    let _ = thread::Builder::new()
-                        .stack_size(10 * 1024)
-                        .spawn(move || io::copy(&mut client_stream_1, &mut server_stream_1));
+                    thread::spawn(move || io::copy(&mut client_stream_1, &mut server_stream_1));
                     // Server => Client
-                    let _ = thread::Builder::new()
-                        .stack_size(10 * 1024)
-                        .spawn(move || io::copy(&mut server_stream_2, &mut client_stream_2));
+                    thread::spawn(move || io::copy(&mut server_stream_2, &mut client_stream_2));
                 }
                 Err(err) => {
                     match err.kind() {
