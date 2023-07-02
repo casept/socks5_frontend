@@ -2,13 +2,13 @@
 name = "socks5_frontend"
 version = "0.1.0"
 authors = ["casept <davids.paskevics@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 byteorder = "~1"
 ignore-result = "~0"
 
 [dev-dependencies]
-simple-server = "~0"
 portpicker = "~0"
-reqwest = {features = ["socks"], version = "~0"}
+tiny_http = "0.12.0"
+reqwest = {features = ["socks", "blocking"], version = "~0"}
